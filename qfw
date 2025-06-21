@@ -1,42 +1,53 @@
 #! /bin/bash
 
-# ######################### qFirewall (qfw) 0.1 ########################
-#
-# This is a basic /sbin/iptables firewall script.
-#
-# Usage:
-# ./qfw {start|stop}
-#
-# Notes:
-# 1. Comment or uncomment the firewall rules below according to your
-#    needs.
-# 2. For convenience, add this script to your /usr/bin or alike with
-#    chmod +x permissions.
-# 2. License: MIT
-# 3. Author: dth at dthlabs dot com
-#    Site:   https://dthlabs.com
-#    github: https://github.com/xdth
-#
-# Brussels, Jan 23, 2018
-# note: https://en.wikipedia.org/wiki/List_of_TCP_and_UDP_port_numbers
+# ######################### qFirewall (qfw) 0.2 ########################
+# This is a basic /sbin/iptables firewall script with Docker support.
+# Version 0.2 - Fixed Docker networking issues
 # #######################################################################
-
 
 # #######################################################################
 # ## Rules function -- edit this according to your needs
 
 function qfw_rules {
-  # Block everything
+  # IMPORTANT: For Docker compatibility, we need to handle FORWARD chain properly
+  
+  # Set default policies
   /sbin/iptables -t filter -P INPUT DROP
-  /sbin/iptables -t filter -P FORWARD DROP
   /sbin/iptables -t filter -P OUTPUT DROP
-  echo "     > Block everything"
+  # CRITICAL: Don't set FORWARD to DROP yet - Docker needs to set up its rules first
+  echo "     > Set INPUT/OUTPUT policies to DROP"
   
   # Apply the same rules to IPv6
   /sbin/ip6tables -t filter -P INPUT DROP
   /sbin/ip6tables -t filter -P FORWARD DROP
   /sbin/ip6tables -t filter -P OUTPUT DROP
   echo "     > Block everything for IPv6"
+
+  # DOCKER COMPATIBILITY - Allow Docker to manage its chains
+  # Check if Docker chains exist
+  if /sbin/iptables -L DOCKER -n >/dev/null 2>&1; then
+    echo "     > Docker chains detected, preserving Docker rules"
+    # Allow Docker's FORWARD rules to work
+    /sbin/iptables -I FORWARD -j DOCKER-USER
+    /sbin/iptables -I FORWARD -j DOCKER-ISOLATION-STAGE-1
+    /sbin/iptables -I FORWARD -o docker0 -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT
+    /sbin/iptables -I FORWARD -o docker0 -j DOCKER
+    /sbin/iptables -I FORWARD -i docker0 ! -o docker0 -j ACCEPT
+    /sbin/iptables -I FORWARD -i docker0 -o docker0 -j ACCEPT
+    
+    # Allow all Docker bridge networks
+    for bridge in $(ls /sys/class/net/ | grep -E '^br-'); do
+      /sbin/iptables -I FORWARD -o $bridge -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT
+      /sbin/iptables -I FORWARD -o $bridge -j DOCKER
+      /sbin/iptables -I FORWARD -i $bridge ! -o $bridge -j ACCEPT
+      /sbin/iptables -I FORWARD -i $bridge -o $bridge -j ACCEPT
+      echo "     > Authorized Docker bridge: $bridge"
+    done
+  fi
+
+  # NOW set FORWARD policy to DROP (after Docker rules)
+  /sbin/iptables -t filter -P FORWARD DROP
+  echo "     > Set FORWARD policy to DROP (Docker rules preserved)"
 
   # Block admin ports by default (for Portainer and NGINXPM)
   /sbin/iptables -t filter -A INPUT -p tcp --dport 81 -j DROP
@@ -127,10 +138,11 @@ function qfw_rules {
   # echo "     > Authorize mail"
 
   # Allow Docker traffic but prevent it from overriding admin port rules
-  /sbin/iptables -A INPUT -i docker0 -j ACCEPT
-  /sbin/iptables -A FORWARD -i docker0 -j ACCEPT
-  /sbin/iptables -A OUTPUT -o docker0 -j ACCEPT
-  echo "     > Authorize Docker with admin port protection"
+  # (now managed above)
+  # /sbin/iptables -A INPUT -i docker0 -j ACCEPT
+  # /sbin/iptables -A FORWARD -i docker0 -j ACCEPT
+  # /sbin/iptables -A OUTPUT -o docker0 -j ACCEPT
+  # echo "     > Authorize Docker with admin port protection"
 
   # Portainer (9334)
   # /sbin/iptables -t filter -A INPUT -p tcp --dport 9334 -j ACCEPT
@@ -182,20 +194,15 @@ function qfw_rules {
   /sbin/iptables -t filter -A OUTPUT -p tcp --dport 9080 -j ACCEPT
   echo "     > Authorize Promtail"
 
-  # Grafana (3000)
-  # /sbin/iptables -t filter -A INPUT -p tcp --dport 3000 -j ACCEPT
-  # /sbin/iptables -t filter -A OUTPUT -p tcp --dport 3000 -j ACCEPT
-  # echo "     > Authorize Grafana"
-
-  # OpenVZ Web Pannel
-  # /sbin/iptables -t filter -A OUTPUT -p tcp --dport 3000 -j ACCEPT
-  # /sbin/iptables -t filter -A INPUT -p tcp --dport 3000 -j ACCEPT
-  # echo "     > Authorize OpenVZ panel"
-
-  # Allow all forwarded traffic
-  # /sbin/iptables -P FORWARD ACCEPT
-  # /sbin/iptables -F FORWARD
-  # echo "Allow all forwarded traffic ok"
+  # Allow Docker interfaces
+  /sbin/iptables -A INPUT -i docker0 -j ACCEPT
+  /sbin/iptables -A OUTPUT -o docker0 -j ACCEPT
+  # Also allow Docker bridge networks
+  for bridge in $(ls /sys/class/net/ | grep -E '^br-'); do
+    /sbin/iptables -A INPUT -i $bridge -j ACCEPT
+    /sbin/iptables -A OUTPUT -o $bridge -j ACCEPT
+  done
+  echo "     > Authorize Docker interfaces"
 
   # Allow KVM/libvirt bridge interface
   /sbin/iptables -I INPUT -i virbr0 -j ACCEPT
@@ -236,7 +243,6 @@ function qfw_rules {
   echo "     > Log and drop suspicious packets"
 }
 
-
 # #######################################################################
 # ## Other functions
 
@@ -246,18 +252,18 @@ function qfw_help {
   echo "Commands:"
   echo "  start     Start the firewall and save rules for persistence"
   echo "  stop      Stop the firewall and remove all rules"
-  echo "  status    Show current firewall rules (not yet implemented)"
+  echo "  status    Show current firewall rules"
   echo ""
   echo "Features:"
   echo "  - IPv4 and IPv6 protection"
   echo "  - Admin port security (81, 9334, 8000)"
-  echo "  - Docker compatibility"
+  echo "  - Docker compatibility with proper FORWARD rules"
   echo "  - Rule persistence across reboots"
   exit 1
 }
 
 function qfw_seeya {
-  echo "     > Thanks for using qFirewall (qfw) v1. Have a good day."
+  echo "     > Thanks for using qFirewall (qfw) v0.2. Have a good day."
   echo ""
   echo ""
 }
@@ -265,12 +271,20 @@ function qfw_seeya {
 function qfw_separator {
   echo ""
   echo ""
-  echo "===================== qFirewall (qfw) v0.1 ====================="
+  echo "===================== qFirewall (qfw) v0.2 ====================="
   echo ""
 }
 
 function qfw_reset {
-  /sbin/iptables -F
+  # Preserve Docker chains when resetting
+  /sbin/iptables -F INPUT
+  /sbin/iptables -F OUTPUT
+  
+  # Only flush FORWARD if Docker is not running
+  if ! /sbin/iptables -L DOCKER -n >/dev/null 2>&1; then
+    /sbin/iptables -F FORWARD
+  fi
+  
   /sbin/iptables -X
   /sbin/iptables -t nat -F
   /sbin/iptables -t nat -X
@@ -279,8 +293,6 @@ function qfw_reset {
   /sbin/iptables -P INPUT ACCEPT
   /sbin/iptables -P FORWARD ACCEPT
   /sbin/iptables -P OUTPUT ACCEPT
-  /sbin/iptables -t filter -F
-  /sbin/iptables -t filter -X
 }
 
 function qfw_start {
@@ -314,6 +326,12 @@ function qfw_stop {
   echo "     > qFirewall stopped"
 }
 
+function qfw_status {
+  qfw_separator
+  echo "     > Current iptables rules:"
+  echo ""
+  /sbin/iptables -L -n -v
+}
 
 # #######################################################################
 # ## Main
@@ -324,6 +342,9 @@ case "$1" in
   ;;
   stop)
   qfw_stop
+  ;;
+  status)
+  qfw_status
   ;;
   *)
   qfw_help
