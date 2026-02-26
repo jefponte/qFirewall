@@ -10,13 +10,13 @@
 
 function qfw_rules {
   # IMPORTANT: For Docker compatibility, we need to handle FORWARD chain properly
-  
+
   # Set default policies
   /sbin/iptables -t filter -P INPUT DROP
   /sbin/iptables -t filter -P OUTPUT DROP
   # CRITICAL: Don't set FORWARD to DROP yet - Docker needs to set up its rules first
   echo "     > Set INPUT/OUTPUT policies to DROP"
-  
+
   # Apply the same rules to IPv6
   /sbin/ip6tables -t filter -P INPUT DROP
   /sbin/ip6tables -t filter -P FORWARD DROP
@@ -34,7 +34,7 @@ function qfw_rules {
     /sbin/iptables -I FORWARD -o docker0 -j DOCKER
     /sbin/iptables -I FORWARD -i docker0 ! -o docker0 -j ACCEPT
     /sbin/iptables -I FORWARD -i docker0 -o docker0 -j ACCEPT
-    
+
     # Allow all Docker bridge networks
     for bridge in $(ls /sys/class/net/ | grep -E '^br-'); do
       /sbin/iptables -I FORWARD -o $bridge -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT
@@ -78,8 +78,8 @@ function qfw_rules {
   # SSH in/out
   # /sbin/iptables -t filter -A INPUT -p tcp --dport 22 -j ACCEPT
   # /sbin/iptables -t filter -A OUTPUT -p tcp --dport 22 -j ACCEPT
-  /sbin/iptables -t filter -A INPUT -p tcp --dport 40440 -j ACCEPT
-  /sbin/iptables -t filter -A OUTPUT -p tcp --dport 40440 -j ACCEPT
+  /sbin/iptables -t filter -A INPUT -p tcp --dport 37389 -j ACCEPT
+  /sbin/iptables -t filter -A OUTPUT -p tcp --dport 37389 -j ACCEPT
   echo "     > Authorize SSH"
 
   # DNS in/out
@@ -105,6 +105,11 @@ function qfw_rules {
   # /sbin/iptables -t filter -A INPUT -p tcp --dport 8000 -j ACCEPT # docker
   # /sbin/iptables -t filter -A INPUT -p tcp --dport 9443 -j ACCEPT # docker
   echo "     > Authorize http and https"
+
+  # DigitalClip App (porta 8083)
+  /sbin/iptables -t filter -A INPUT -p tcp --dport 8083 -j ACCEPT
+  /sbin/iptables -t filter -A OUTPUT -p tcp --sport 8083 -j ACCEPT
+  echo "     > Authorize DigitalClip app (8083)"
 
   # FTP Out
   # /sbin/iptables -t filter -A OUTPUT -p tcp --dport 21 -j ACCEPT
@@ -279,17 +284,21 @@ function qfw_reset {
   # Preserve Docker chains when resetting
   /sbin/iptables -F INPUT
   /sbin/iptables -F OUTPUT
-  
+
   # Only flush FORWARD if Docker is not running
-  if ! /sbin/iptables -L DOCKER -n >/dev/null 2>&1; then
+  if ! systemctl is-active --quiet docker; then
     /sbin/iptables -F FORWARD
   fi
-  
+
   /sbin/iptables -X
-  /sbin/iptables -t nat -F
-  /sbin/iptables -t nat -X
+  if ! systemctl is-active --quiet docker; then
+    /sbin/iptables -t nat -F
+    /sbin/iptables -t nat -X
+  fi
+
   /sbin/iptables -t mangle -F
   /sbin/iptables -t mangle -X
+
   /sbin/iptables -P INPUT ACCEPT
   /sbin/iptables -P FORWARD ACCEPT
   /sbin/iptables -P OUTPUT ACCEPT
@@ -303,7 +312,7 @@ function qfw_start {
   qfw_rules
   echo "     > Rules loaded"
   echo "     > qFirewall started"
-  
+
   # Save rules for persistence (no need because it's started by a service)
   # if command -v iptables-save >/dev/null 2>&1; then
   #  echo "     > Saving firewall rules for persistence"
