@@ -29,7 +29,9 @@ function qfw_rules {
     echo "     > Docker chains detected, preserving Docker rules"
     # Allow Docker's FORWARD rules to work
     /sbin/iptables -I FORWARD -j DOCKER-USER
-    /sbin/iptables -I FORWARD -j DOCKER-ISOLATION-STAGE-1
+    if /sbin/iptables -L DOCKER-ISOLATION-STAGE-1 -n >/dev/null 2>&1; then
+      /sbin/iptables -I FORWARD -j DOCKER-ISOLATION-STAGE-1
+    fi
     /sbin/iptables -I FORWARD -o docker0 -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT
     /sbin/iptables -I FORWARD -o docker0 -j DOCKER
     /sbin/iptables -I FORWARD -i docker0 ! -o docker0 -j ACCEPT
@@ -41,6 +43,11 @@ function qfw_rules {
       /sbin/iptables -I FORWARD -o $bridge -j DOCKER
       /sbin/iptables -I FORWARD -i $bridge ! -o $bridge -j ACCEPT
       /sbin/iptables -I FORWARD -i $bridge -o $bridge -j ACCEPT
+      # Priority DNS rules for this bridge
+      /sbin/iptables -I FORWARD 1 -i $bridge -p tcp --dport 53 -j ACCEPT
+      /sbin/iptables -I FORWARD 1 -i $bridge -p udp --dport 53 -j ACCEPT
+      /sbin/iptables -I FORWARD 1 -o $bridge -p tcp --sport 53 -m state --state ESTABLISHED,RELATED -j ACCEPT
+      /sbin/iptables -I FORWARD 1 -o $bridge -p udp --sport 53 -m state --state ESTABLISHED,RELATED -j ACCEPT
       echo "     > Authorized Docker bridge: $bridge"
     done
   fi
@@ -82,18 +89,42 @@ function qfw_rules {
   /sbin/iptables -t filter -A OUTPUT -p tcp --dport 37389 -j ACCEPT
   echo "     > Authorize SSH"
 
-  # DNS in/out
+  # DNS in/out - System level (high priority for Docker daemon)
+  /sbin/iptables -t filter -I OUTPUT 1 -p tcp --dport 53 -j ACCEPT
+  /sbin/iptables -t filter -I OUTPUT 1 -p udp --dport 53 -j ACCEPT
+  /sbin/iptables -t filter -I INPUT 1 -p tcp --sport 53 -m state --state ESTABLISHED,RELATED -j ACCEPT
+  /sbin/iptables -t filter -I INPUT 1 -p udp --sport 53 -m state --state ESTABLISHED,RELATED -j ACCEPT
   /sbin/iptables -t filter -A OUTPUT -p tcp --dport 53 -j ACCEPT
   /sbin/iptables -t filter -A OUTPUT -p udp --dport 53 -j ACCEPT
   /sbin/iptables -t filter -A INPUT -p tcp --dport 53 -j ACCEPT
   /sbin/iptables -t filter -A INPUT -p udp --dport 53 -j ACCEPT
   echo "     > Authorize DNS"
 
+  # DNS for Docker containers - Allow DNS queries from Docker networks
+  /sbin/iptables -t filter -I FORWARD 1 -p tcp --dport 53 -j ACCEPT
+  /sbin/iptables -t filter -I FORWARD 1 -p udp --dport 53 -j ACCEPT
+  /sbin/iptables -t filter -I FORWARD 1 -p tcp --sport 53 -m state --state ESTABLISHED,RELATED -j ACCEPT
+  /sbin/iptables -t filter -I FORWARD 1 -p udp --sport 53 -m state --state ESTABLISHED,RELATED -j ACCEPT
+  echo "     > Authorize DNS for Docker containers"
+
+  # HTTP/HTTPS for Docker containers - Allow outbound web traffic from containers
+  /sbin/iptables -t filter -I FORWARD 1 -p tcp --dport 80 -j ACCEPT
+  /sbin/iptables -t filter -I FORWARD 1 -p tcp --dport 443 -j ACCEPT
+  /sbin/iptables -t filter -I FORWARD 1 -p tcp --sport 80 -m state --state ESTABLISHED,RELATED -j ACCEPT
+  /sbin/iptables -t filter -I FORWARD 1 -p tcp --sport 443 -m state --state ESTABLISHED,RELATED -j ACCEPT
+  echo "     > Authorize HTTP/HTTPS for Docker containers"
+
+  # Allow established/related connections in FORWARD (for all container traffic)
+  /sbin/iptables -A FORWARD -m state --state RELATED,ESTABLISHED -j ACCEPT
+  echo "     > Allow established connections in FORWARD"
+
   # NTP Out
   /sbin/iptables -t filter -A OUTPUT -p udp --dport 123 -j ACCEPT
   echo "     > Authorize NTP outbound"
 
-  # HTTP + HTTPS Out
+  # HTTP + HTTPS Out - Priority for feed processing
+  /sbin/iptables -t filter -I OUTPUT 1 -p tcp --dport 80 -j ACCEPT
+  /sbin/iptables -t filter -I OUTPUT 1 -p tcp --dport 443 -j ACCEPT
   /sbin/iptables -t filter -A OUTPUT -p tcp --dport 80 -j ACCEPT
   /sbin/iptables -t filter -A OUTPUT -p tcp --dport 443 -j ACCEPT
   # /sbin/iptables -t filter -A OUTPUT -p tcp --dport 8000 -j ACCEPT # docker
@@ -110,6 +141,17 @@ function qfw_rules {
   /sbin/iptables -t filter -A INPUT -p tcp --dport 8083 -j ACCEPT
   /sbin/iptables -t filter -A OUTPUT -p tcp --sport 8083 -j ACCEPT
   echo "     > Authorize DigitalClip app (8083)"
+
+  # DigitalClip App (porta 8084)
+  /sbin/iptables -t filter -A INPUT -p tcp --dport 8084 -j ACCEPT
+  /sbin/iptables -t filter -A OUTPUT -p tcp --sport 8084 -j ACCEPT
+  echo "     > Authorize DigitalClip Staging (8084)"
+
+
+  # PhpMyAdmin Staging (porta 8082)
+  /sbin/iptables -t filter -A INPUT -p tcp --dport 8082 -j ACCEPT
+  /sbin/iptables -t filter -A OUTPUT -p tcp --sport 8082 -j ACCEPT
+  echo "     > Authorize PhpMyAdmin Staging (8082)"
 
   # FTP Out
   # /sbin/iptables -t filter -A OUTPUT -p tcp --dport 21 -j ACCEPT
@@ -199,15 +241,31 @@ function qfw_rules {
   /sbin/iptables -t filter -A OUTPUT -p tcp --dport 9080 -j ACCEPT
   echo "     > Authorize Promtail"
 
-  # Allow Docker interfaces
+  # Allow Docker interfaces with specific DNS priority
+  /sbin/iptables -I INPUT 1 -i docker0 -p tcp --dport 53 -j ACCEPT
+  /sbin/iptables -I INPUT 1 -i docker0 -p udp --dport 53 -j ACCEPT
+  /sbin/iptables -I OUTPUT 1 -o docker0 -p tcp --sport 53 -j ACCEPT
+  /sbin/iptables -I OUTPUT 1 -o docker0 -p udp --sport 53 -j ACCEPT
   /sbin/iptables -A INPUT -i docker0 -j ACCEPT
   /sbin/iptables -A OUTPUT -o docker0 -j ACCEPT
-  # Also allow Docker bridge networks
-  for bridge in $(ls /sys/class/net/ | grep -E '^br-'); do
+
+  # Also allow Docker bridge networks with DNS priority
+  for bridge in $(ls /sys/class/net/ 2>/dev/null | grep -E '^br-'); do
+    /sbin/iptables -I INPUT 1 -i $bridge -p tcp --dport 53 -j ACCEPT
+    /sbin/iptables -I INPUT 1 -i $bridge -p udp --dport 53 -j ACCEPT
+    /sbin/iptables -I OUTPUT 1 -o $bridge -p tcp --sport 53 -j ACCEPT
+    /sbin/iptables -I OUTPUT 1 -o $bridge -p udp --sport 53 -j ACCEPT
     /sbin/iptables -A INPUT -i $bridge -j ACCEPT
     /sbin/iptables -A OUTPUT -o $bridge -j ACCEPT
   done
-  echo "     > Authorize Docker interfaces"
+
+  # Allow Docker embedded DNS server (127.0.0.11)
+  /sbin/iptables -I INPUT 1 -s 127.0.0.11 -p tcp --sport 53 -j ACCEPT
+  /sbin/iptables -I INPUT 1 -s 127.0.0.11 -p udp --sport 53 -j ACCEPT
+  /sbin/iptables -I OUTPUT 1 -d 127.0.0.11 -p tcp --dport 53 -j ACCEPT
+  /sbin/iptables -I OUTPUT 1 -d 127.0.0.11 -p udp --dport 53 -j ACCEPT
+
+  echo "     > Authorize Docker interfaces with DNS priority"
 
   # Allow KVM/libvirt bridge interface
   /sbin/iptables -I INPUT -i virbr0 -j ACCEPT
@@ -238,18 +296,79 @@ function qfw_rules {
   /sbin/iptables -A INPUT -p tcp --tcp-flags ALL ALL -j DROP
   echo "     > Block XMAS packets"
 
-  # Rate limit new connections to prevent various DoS attacks
-  /sbin/iptables -A INPUT -p tcp -m state --state NEW -m limit --limit 30/min --limit-burst 5 -j ACCEPT
-  echo "     > Rate limit new connections"
+  # Rate limit new connections to prevent various DoS attacks (excluding DNS)
+  /sbin/iptables -A INPUT -p tcp -m state --state NEW ! --dport 53 -m limit --limit 60/min --limit-burst 10 -j ACCEPT
+  /sbin/iptables -A INPUT -p udp -m state --state NEW ! --dport 53 -m limit --limit 60/min --limit-burst 10 -j ACCEPT
+  # Allow DNS without rate limiting
+  /sbin/iptables -A INPUT -p tcp --dport 53 -m state --state NEW -j ACCEPT
+  /sbin/iptables -A INPUT -p udp --dport 53 -m state --state NEW -j ACCEPT
+  echo "     > Rate limit new connections (DNS excluded)"
 
   # Log and drop suspicious packets
   /sbin/iptables -A INPUT -m limit --limit 5/min -j LOG --log-prefix "qFirewall DROP: " --log-level 7 --log-tcp-options --log-ip-options
+
+  # Log DNS issues for debugging (before final DROP)
+  /sbin/iptables -A INPUT -p tcp --dport 53 -m limit --limit 2/min -j LOG --log-prefix "qFirewall DNS-TCP: " --log-level 7
+  /sbin/iptables -A INPUT -p udp --dport 53 -m limit --limit 2/min -j LOG --log-prefix "qFirewall DNS-UDP: " --log-level 7
+
   /sbin/iptables -A INPUT -j DROP
-  echo "     > Log and drop suspicious packets"
+  echo "     > Log and drop suspicious packets (with DNS debugging)"
 }
 
 # #######################################################################
 # ## Other functions
+
+function qfw_test_dns {
+  qfw_separator
+  echo "     > Testing DNS resolution and connectivity..."
+
+  echo "     > Testing system DNS:"
+  if timeout 10 nslookup cinepop.com.br > /dev/null 2>&1; then
+    echo "     ✓ System DNS resolution: OK (cinepop.com.br)"
+  else
+    echo "     ✗ System DNS resolution: FAILED (cinepop.com.br)"
+  fi
+
+  if timeout 10 nslookup google.com > /dev/null 2>&1; then
+    echo "     ✓ System DNS resolution: OK (google.com)"
+  else
+    echo "     ✗ System DNS resolution: FAILED (google.com)"
+  fi
+
+  # Test Docker DNS if available
+  if command -v docker >/dev/null 2>&1 && docker ps >/dev/null 2>&1; then
+    echo "     > Testing Docker DNS:"
+    if docker run --rm alpine nslookup cinepop.com.br > /dev/null 2>&1; then
+      echo "     ✓ Docker DNS resolution: OK (cinepop.com.br)"
+    else
+      echo "     ✗ Docker DNS resolution: FAILED (cinepop.com.br)"
+    fi
+
+    echo "     > Testing Docker HTTP connectivity:"
+    if docker run --rm alpine sh -c "timeout 10 wget -q --spider https://cinepop.com.br/feed" > /dev/null 2>&1; then
+      echo "     ✓ Docker HTTP/HTTPS: OK (cinepop.com.br/feed)"
+    else
+      echo "     ✗ Docker HTTP/HTTPS: FAILED (cinepop.com.br/feed)"
+    fi
+
+    echo "     > Testing staging container DNS (if running):"
+    if docker ps --format "table {{.Names}}" | grep -q digitalclip-app-staging; then
+      if docker exec digitalclip-app-staging php -r "echo gethostbyname('cinepop.com.br');" 2>/dev/null | grep -qE '^[0-9]+\.[0-9]+'; then
+        echo "     ✓ Staging container DNS: OK (cinepop.com.br)"
+      else
+        echo "     ✗ Staging container DNS: FAILED (cinepop.com.br)"
+      fi
+
+      if docker exec digitalclip-app-staging curl -I --connect-timeout 10 --max-time 15 https://cinepop.com.br/feed > /dev/null 2>&1; then
+        echo "     ✓ Staging container HTTP: OK (cinepop.com.br/feed)"
+      else
+        echo "     ✗ Staging container HTTP: FAILED (cinepop.com.br/feed)"
+      fi
+    fi
+  fi
+
+  echo "     > DNS and connectivity test completed"
+}
 
 function qfw_help {
   echo "qFirewall usage: ./qfw {command}"
@@ -258,11 +377,14 @@ function qfw_help {
   echo "  start     Start the firewall and save rules for persistence"
   echo "  stop      Stop the firewall and remove all rules"
   echo "  status    Show current firewall rules"
+  echo "  test-dns  Test DNS resolution and HTTP connectivity for containers"
   echo ""
   echo "Features:"
   echo "  - IPv4 and IPv6 protection"
   echo "  - Admin port security (81, 9334, 8000)"
   echo "  - Docker compatibility with proper FORWARD rules"
+  echo "  - Enhanced DNS support for containers"
+  echo "  - Priority DNS rules for Docker networks"
   echo "  - Rule persistence across reboots"
   exit 1
 }
@@ -354,6 +476,9 @@ case "$1" in
   ;;
   status)
   qfw_status
+  ;;
+  test-dns)
+  qfw_test_dns
   ;;
   *)
   qfw_help
