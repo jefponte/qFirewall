@@ -173,7 +173,9 @@ function qfw_rules {
 
   # Mail SMTP - Mailtrap (porta 2525)
   /sbin/iptables -t filter -A OUTPUT -p tcp --dport 2525 -j ACCEPT
+  /sbin/iptables -t filter -A INPUT -p tcp --sport 2525 -m state --state ESTABLISHED,RELATED -j ACCEPT
   /sbin/iptables -t filter -I FORWARD 1 -p tcp --dport 2525 -j ACCEPT
+  /sbin/iptables -t filter -I FORWARD 1 -p tcp --sport 2525 -m state --state ESTABLISHED,RELATED -j ACCEPT
   echo "     > Authorize SMTP Mailtrap (2525)"
 
   # Mail POP3:110
