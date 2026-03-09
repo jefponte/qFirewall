@@ -164,6 +164,10 @@ function qfw_rules {
   /sbin/iptables -t filter -A OUTPUT -p tcp --sport 8088 -j ACCEPT
   echo "     > Authorize PhpMyAdmin Revert (8088)"
 
+  # MINIO  (porta 8089)
+  /sbin/iptables -t filter -A INPUT -p tcp --dport 8089 -j ACCEPT
+  /sbin/iptables -t filter -A OUTPUT -p tcp --sport 8089 -j ACCEPT
+  echo "     > Authorize MINIO (8089)"
 
   # FTP Out
   # /sbin/iptables -t filter -A OUTPUT -p tcp --dport 21 -j ACCEPT
