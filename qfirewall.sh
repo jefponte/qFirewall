@@ -153,6 +153,18 @@ function qfw_rules {
   /sbin/iptables -t filter -A OUTPUT -p tcp --sport 8082 -j ACCEPT
   echo "     > Authorize PhpMyAdmin Staging (8082)"
 
+  # DigitalClip App (porta 8087)
+  /sbin/iptables -t filter -A INPUT -p tcp --dport 8087 -j ACCEPT
+  /sbin/iptables -t filter -A OUTPUT -p tcp --sport 8087 -j ACCEPT
+  echo "     > Authorize DigitalClip Revert (8087)"
+
+
+  # PhpMyAdmin Revert (porta 8088)
+  /sbin/iptables -t filter -A INPUT -p tcp --dport 8088 -j ACCEPT
+  /sbin/iptables -t filter -A OUTPUT -p tcp --sport 8088 -j ACCEPT
+  echo "     > Authorize PhpMyAdmin Revert (8088)"
+
+
   # FTP Out
   # /sbin/iptables -t filter -A OUTPUT -p tcp --dport 21 -j ACCEPT
   # /sbin/iptables -t filter -A OUTPUT -p tcp --dport 20 -j ACCEPT
