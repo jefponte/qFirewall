@@ -114,6 +114,12 @@ function qfw_rules {
   /sbin/iptables -t filter -I FORWARD 1 -p tcp --sport 443 -m state --state ESTABLISHED,RELATED -j ACCEPT
   echo "     > Authorize HTTP/HTTPS for Docker containers"
 
+  # Streaming ports for Docker containers (digitalclip-recording)
+  # Range 7000-12000 covers Icecast, Shoutcast, and similar streaming servers
+  /sbin/iptables -t filter -I FORWARD 1 -p tcp --dport 7000:12000 -j ACCEPT
+  /sbin/iptables -t filter -I FORWARD 1 -p tcp --sport 7000:12000 -m state --state ESTABLISHED,RELATED -j ACCEPT
+  echo "     > Authorize streaming ports 7000-12000 for Docker containers"
+
   # Allow established/related connections in FORWARD (for all container traffic)
   /sbin/iptables -A FORWARD -m state --state RELATED,ESTABLISHED -j ACCEPT
   echo "     > Allow established connections in FORWARD"
@@ -159,15 +165,10 @@ function qfw_rules {
   echo "     > Authorize DigitalClip Revert (8087)"
 
 
-  # PhpMyAdmin Revert (porta 8088)
-  /sbin/iptables -t filter -A INPUT -p tcp --dport 8088 -j ACCEPT
-  /sbin/iptables -t filter -A OUTPUT -p tcp --sport 8088 -j ACCEPT
-  echo "     > Authorize PhpMyAdmin Revert (8088)"
-
-  # MINIO  (porta 8089)
-  /sbin/iptables -t filter -A INPUT -p tcp --dport 8089 -j ACCEPT
-  /sbin/iptables -t filter -A OUTPUT -p tcp --sport 8089 -j ACCEPT
-  echo "     > Authorize MINIO (8089)"
+  # filestash  (porta 8089)
+  # /sbin/iptables -t filter -A INPUT -p tcp --dport 8089 -j ACCEPT
+  # /sbin/iptables -t filter -A OUTPUT -p tcp --sport 8089 -j ACCEPT
+  # echo "     > Authorize filestash (8089)"
 
   # FTP Out
   # /sbin/iptables -t filter -A OUTPUT -p tcp --dport 21 -j ACCEPT
