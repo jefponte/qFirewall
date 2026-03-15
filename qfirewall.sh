@@ -183,19 +183,24 @@ function qfw_rules {
   # Mail SMTP
   # /sbin/iptables -t filter -A INPUT -p tcp --dport 25 -j ACCEPT
   # /sbin/iptables -t filter -A OUTPUT -p tcp --dport 25 -j ACCEPT
-  # /sbin/iptables -t filter -A INPUT -p tcp --dport 587 -j ACCEPT
-  # /sbin/iptables -t filter -A OUTPUT -p tcp --dport 587 -j ACCEPT
 
-  # Mail SMTP - Mailgun SSL (porta 465)
-  /sbin/iptables -t filter -A OUTPUT -p tcp --dport 465 -j ACCEPT
-  /sbin/iptables -t filter -A INPUT -p tcp --sport 465 -m state --state ESTABLISHED,RELATED -j ACCEPT
+  # Mail SMTP - TLS (porta 587) - Primary method
+  /sbin/iptables -t filter -I OUTPUT 1 -p tcp --dport 587 -j ACCEPT
+  /sbin/iptables -t filter -I INPUT 1 -p tcp --sport 587 -m state --state ESTABLISHED,RELATED -j ACCEPT
+  /sbin/iptables -t filter -I FORWARD 1 -p tcp --dport 587 -j ACCEPT
+  /sbin/iptables -t filter -I FORWARD 1 -p tcp --sport 587 -m state --state ESTABLISHED,RELATED -j ACCEPT
+  echo "     > Authorize SMTP TLS (587)"
+
+  # Mail SMTP - Mailgun SSL (porta 465) - High priority for containers
+  /sbin/iptables -t filter -I OUTPUT 1 -p tcp --dport 465 -j ACCEPT
+  /sbin/iptables -t filter -I INPUT 1 -p tcp --sport 465 -m state --state ESTABLISHED,RELATED -j ACCEPT
   /sbin/iptables -t filter -I FORWARD 1 -p tcp --dport 465 -j ACCEPT
   /sbin/iptables -t filter -I FORWARD 1 -p tcp --sport 465 -m state --state ESTABLISHED,RELATED -j ACCEPT
   echo "     > Authorize SMTP Mailgun SSL (465)"
 
   # Mail SMTP - Mailtrap (porta 2525)
-  /sbin/iptables -t filter -A OUTPUT -p tcp --dport 2525 -j ACCEPT
-  /sbin/iptables -t filter -A INPUT -p tcp --sport 2525 -m state --state ESTABLISHED,RELATED -j ACCEPT
+  /sbin/iptables -t filter -I OUTPUT 1 -p tcp --dport 2525 -j ACCEPT
+  /sbin/iptables -t filter -I INPUT 1 -p tcp --sport 2525 -m state --state ESTABLISHED,RELATED -j ACCEPT
   /sbin/iptables -t filter -I FORWARD 1 -p tcp --dport 2525 -j ACCEPT
   /sbin/iptables -t filter -I FORWARD 1 -p tcp --sport 2525 -m state --state ESTABLISHED,RELATED -j ACCEPT
   echo "     > Authorize SMTP Mailtrap (2525)"
